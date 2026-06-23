@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>Total Proses & Item by Dits</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.34.0/dist/tabler-icons.min.css">
+  <style>
+    :root {
+      --bg:         #18181b;
+      --sidebar-bg: #18181b;
+      --surface:    #18181b;
+      --surface-2:  #27272a;
+      --border:     #3f3f46;
+      --text:       #f4f4f5;
+      --text-2:     #a1a1aa;
+      --text-3:     #71717a;
+      --accent:     #3b82f6;
+      --floppa:     #3b82f6;
+      --merpati:    #ec4899;
+      --lainnya:    #71717a;
+      --item-bar:   #8b5cf6;
+      --error-bg:   #2d1515;
+      --error-text: #fca5a5;
+      --purple:     #a78bfa;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100%;
+      overflow: hidden;
+    }
+
+    /* ── LAYOUT SHELL ── */
+    .app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── TOP HEADER ── */
+    .top-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 11px 16px;
+      border-bottom: 0.5px solid var(--border);
+      background: var(--sidebar-bg);
+      flex-shrink: 0;
+      gap: 10px;
+    }
+    .top-header h1 { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; }
+    .top-header p  { font-size: 10px; color: var(--text-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60vw; }
+
+    .top-right {
+      display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+    }
+    .last-updated {
+      font-size: 10px; color: var(--text-3); white-space: nowrap; display: none;
+    }
+    .btn-refresh {
+      display: none;
+      align-items: center; justify-content: center;
+      gap: 5px;
+      height: 28px;
+      padding: 0 10px;
+      background: var(--surface-2);
+      border: 0.5px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-2);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-refresh:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+    .btn-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-refresh.spinning i { animation: spin 0.7s linear infinite; }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+    /* ── BODY AREA ── */
+    .app-body {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    /* ── SIDEBAR (desktop) ── */
+    .sidebar {
+      width: 150px;
+      flex-shrink: 0;
+      background: var(--sidebar-bg);
+      border-right: 0.5px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 10px 0;
+      overflow-y: auto;
+    }
+    .sidebar::-webkit-scrollbar { display: none; }
+
+    .sb-section {
+      padding: 8px 14px 4px;
+      font-size: 9px; color: var(--text-3);
+      text-transform: uppercase; letter-spacing: .08em; font-weight: 600;
+    }
+    .nav-item {
+      padding: 8px 14px;
+      font-size: 12px; color: var(--text-2);
+      display: flex; align-items: center; gap: 8px;
+      cursor: pointer;
+      border-left: 2px solid transparent;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .nav-item i { font-size: 15px; flex-shrink: 0; }
+    .nav-item:hover { background: rgba(255,255,255,0.03); color: var(--text); }
+    .nav-item.active {
+      color: #60a5fa; font-weight: 600;
+      background: rgba(59,130,246,0.08);
+      border-left-color: var(--accent);
+    }
+    .sb-divider { border: none; border-top: 0.5px solid var(--border); margin: 8px 0; }
+
+    /* ── BOTTOM NAV (mobile) ── */
+    .bottom-nav {
+      display: none;
+      flex-shrink: 0;
+      background: var(--sidebar-bg);
+      border-top: 0.5px solid var(--border);
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .bottom-nav::-webkit-scrollbar { display: none; }
+    .bottom-nav-inner {
+      display: flex;
+      align-items: stretch;
+      min-width: max-content;
+    }
+    .bn-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      padding: 8px 14px;
+      font-size: 10px;
+      color: var(--text-2);
+      cursor: pointer;
+      white-space: nowrap;
+      border-bottom: 2px solid transparent;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .bn-item i { font-size: 18px; }
+    .bn-item.active { color: #60a5fa; border-bottom-color: var(--accent); }
+    .bn-sep {
+      width: 0.5px;
+      background: var(--border);
+      margin: 8px 0;
+      align-self: stretch;
+    }
+
+    /* ── MAIN ── */
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+
+    /* ── INPUT BAR ── */
+    .input-bar {
+      padding: 12px 14px 10px;
+      flex-shrink: 0;
+      border-bottom: 0.5px solid var(--border);
+    }
+
+    /* ── BULAN PILLS ── */
+    .bulan-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 10px;
+    }
+    .bulan-pills {
+      display: flex;
+      gap: 5px;
+      flex-wrap: wrap;
+    }
+    .bulan-pill {
+      background: var(--surface-2);
+      border: 0.5px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-2);
+      font-size: 12px;
+      padding: 5px 10px;
+      cursor: pointer;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      white-space: nowrap;
+    }
+    .bulan-pill:hover { color: var(--text); border-color: var(--text-3); }
+    .bulan-pill.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      font-weight: 600;
+    }
+
+    .input-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+    }
+
+    .igroup {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .igroup label {
+      font-size: 10px; font-weight: 600;
+      color: var(--text-3);
+      text-transform: uppercase; letter-spacing: .06em;
+      white-space: nowrap;
+    }
+    .igroup input {
+      background: var(--surface-2);
+      border: 0.5px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 13px;
+      padding: 7px 9px;
+      outline: none;
+      width: 90px;
+      -webkit-appearance: none;
+    }
+    .igroup input:focus { border-color: var(--accent); }
+    .igroup input::placeholder { color: var(--text-3); }
+
+    .tgl-sep {
+      color: var(--text-3);
+      font-size: 13px;
+      margin-bottom: 9px;
+      flex-shrink: 0;
+    }
+
+    .btn-hitung {
+      background: var(--accent); color: #fff;
+      border: none; border-radius: 8px;
+      padding: 0 18px;
+      height: 32px;
+      font-size: 13px; font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+      margin-left: auto;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .btn-hitung:hover   { background: #2563eb; }
+    .btn-hitung:disabled { background: var(--surface-2); color: var(--text-3); cursor: not-allowed; }
+
+    .status-row {
+      display: flex; align-items: center;
+      min-height: 14px;
+      margin-top: 8px;
+    }
+    .status-text       { font-size: 11px; color: var(--text-2); }
+    .status-text.error { color: var(--error-text); }
+
+    /* ── SCROLL AREA ── */
+    .scroll-area {
+      flex: 1; overflow-y: auto; padding: 14px 14px 24px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .scroll-area::-webkit-scrollbar { width: 3px; }
+    .scroll-area::-webkit-scrollbar-track { background: transparent; }
+    .scroll-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    /* ── METRICS ── */
+    .metrics-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0,1fr));
+      gap: 7px; margin-bottom: 12px;
+    }
+    .metric-card {
+      background: var(--surface-2); border-radius: 10px;
+      padding: 9px 11px; border: 0.5px solid var(--border);
+    }
+    .metric-lbl { font-size: 9px; color: var(--text-3); margin-bottom: 4px; }
+    .metric-val { font-size: 18px; font-weight: 600; color: var(--text); line-height: 1; }
+    .metric-val.blue   { color: #60a5fa; }
+    .metric-val.pink   { color: #f472b6; }
+    .metric-val.purple { color: var(--purple); }
+
+    /* ── SECTION LABEL ── */
+    .sec-lbl {
+      font-size: 10px; color: var(--text-3);
+      text-transform: uppercase; letter-spacing: .07em; font-weight: 600;
+      margin: 14px 0 8px;
+    }
+    .sec-lbl:first-child { margin-top: 0; }
+
+    .periode-line { font-size: 11px; color: var(--text-3); margin-bottom: 10px; }
+
+    /* ── CARD ── */
+    .card {
+      background: var(--surface-2); border: 0.5px solid var(--border);
+      border-radius: 10px; padding: 12px; margin-bottom: 8px;
+    }
+
+    /* ── BAR ROWS ── */
+    .bar-row {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 0; border-bottom: 0.5px solid rgba(255,255,255,0.04);
+    }
+    .bar-row:last-child { border-bottom: none; }
+    .bar-rank  { font-size: 10px; color: var(--text-3); width: 12px; text-align: right; flex-shrink: 0; }
+    .bar-name  {
+      width: 68px; font-size: 12px; color: var(--text);
+      display: flex; align-items: center; gap: 5px; flex-shrink: 0;
+      overflow: hidden;
+    }
+    .bar-dot   { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .bar-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar-track { flex: 1; height: 6px; background: var(--bg); border-radius: 4px; overflow: hidden; min-width: 20px; }
+    .bar-fill  { height: 100%; border-radius: 4px; }
+    .bar-val   { font-size: 12px; font-weight: 600; width: 34px; text-align: right; flex-shrink: 0; }
+    .bar-badge {
+      font-size: 9px; padding: 2px 6px; border-radius: 10px;
+      flex-shrink: 0; width: 52px; text-align: center; font-weight: 600;
+      letter-spacing: .02em;
+    }
+    .badge-floppa  { background: rgba(59,130,246,0.12);  color: #60a5fa; }
+    .badge-merpati { background: rgba(236,72,153,0.12);  color: #f472b6; }
+    .badge-lainnya { background: rgba(113,113,122,0.15); color: var(--text-2); }
+
+    .legend {
+      display: flex; gap: 12px; margin-top: 10px;
+      font-size: 11px; color: var(--text-2); flex-wrap: wrap;
+    }
+    .legend-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+
+    .skipped-box { font-size: 11px; color: var(--text-3); margin-top: 10px; }
+    .skipped-box strong { color: var(--error-text); }
+
+    /* ── TEAM CARDS ── */
+    .grouped-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0,1fr));
+      gap: 8px; margin-bottom: 8px;
+    }
+    .group-card {
+      background: var(--surface-2); border-radius: 10px;
+      padding: 12px 13px; border: 0.5px solid var(--border);
+    }
+    .group-title { font-size: 12px; font-weight: 700; margin-bottom: 8px; }
+    .group-title.floppa  { color: #60a5fa; }
+    .group-title.merpati { color: #f472b6; }
+    .group-title.lainnya { color: var(--text-3); }
+    .group-member {
+      display: flex; justify-content: space-between;
+      font-size: 12px; color: #d4d4d8; padding: 3px 0;
+      gap: 4px;
+    }
+    .group-member .gname { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .group-member .gval  { font-variant-numeric: tabular-nums; color: var(--text); flex-shrink: 0; }
+    .group-footer {
+      display: flex; justify-content: space-between;
+      font-size: 12px; font-weight: 700; color: var(--text);
+      border-top: 0.5px solid var(--border); margin-top: 8px; padding-top: 8px;
+    }
+    .group-lainnya {
+      background: var(--surface-2); border-radius: 10px;
+      padding: 12px 13px; border: 0.5px solid var(--border);
+    }
+
+    /* ── PODIUM ── */
+    .podium-row {
+      display: grid;
+      grid-template-columns: 1fr 1.2fr 1fr;
+      gap: 7px; align-items: end;
+      margin-bottom: 4px;
+    }
+    .podium-card {
+      background: var(--surface-2); border-radius: 10px;
+      padding: 10px 8px; text-align: center;
+      border: 0.5px solid var(--border);
+    }
+    .podium-card.top1 {
+      background: #1e1b4b; border-color: #4c1d95;
+      padding: 16px 8px;
+    }
+    .podium-rank { font-size: 10px; color: var(--text-3); margin-bottom: 3px; font-weight: 600; }
+    .top1 .podium-rank { color: #a78bfa; }
+    .podium-name {
+      font-size: 10px; font-weight: 600; margin-bottom: 5px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .podium-val  { font-size: 16px; font-weight: 700; color: var(--purple); }
+    .top1 .podium-val { font-size: 22px; }
+    .podium-pct  { font-size: 10px; color: var(--text-3); margin-top: 3px; }
+
+    /* ── ITEM ROWS ── */
+    .item-row {
+      display: flex; align-items: center; gap: 7px;
+      padding: 6px 0; border-bottom: 0.5px solid rgba(255,255,255,0.04);
+    }
+    .item-row:last-child { border-bottom: none; }
+    .item-name { width: 110px; font-size: 12px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .item-track { flex: 1; height: 5px; background: var(--bg); border-radius: 4px; overflow: hidden; min-width: 20px; }
+    .item-fill  { height: 100%; border-radius: 4px; background: var(--item-bar); }
+    .item-val   { width: 34px; text-align: right; font-size: 12px; font-weight: 600; flex-shrink: 0; }
+    .item-pct   { width: 40px; text-align: right; font-size: 11px; color: var(--text-3); flex-shrink: 0; }
+
+    /* ── DONUT ── */
+    .chart-wrap    { position: relative; height: 190px; margin-top: 4px; }
+    .chart-legend  { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 10px; font-size: 11px; color: var(--text-2); }
+    .chart-leg-dot { width: 9px; height: 9px; border-radius: 2px; display: inline-block; margin-right: 4px; flex-shrink: 0; vertical-align: middle; }
+
+    /* ── ERROR / EMPTY ── */
+    .error-box { background: var(--error-bg); color: var(--error-text); padding: 10px 12px; border-radius: 8px; font-size: 12px; }
+    .no-data   { font-size: 12px; color: var(--text-3); padding: 40px 0; text-align: center; }
+
+    /* ══════════════════════════════════════════
+       RESPONSIVE: MOBILE BREAKPOINT ≤ 600px
+       ══════════════════════════════════════════ */
+    @media (max-width: 600px) {
+      .sidebar { display: none; }
+      .bottom-nav { display: flex; }
+
+      .top-header { padding: 10px 14px; }
+      .top-header p { display: none; }
+      .last-updated { display: none !important; }
+
+      /* show only icon on refresh button */
+      .btn-refresh span { display: none; }
+      .btn-refresh { padding: 0 10px; }
+
+      .input-bar { padding: 10px 12px 8px; }
+      .bulan-pill { font-size: 11px; padding: 4px 8px; }
+
+      .scroll-area { padding: 12px 12px 20px; }
+
+      .metrics-row { gap: 6px; }
+      .metric-val  { font-size: 16px; }
+      .metric-lbl  { font-size: 9px; }
+
+      .bar-name  { width: 62px; }
+      .bar-badge { width: 46px; font-size: 8px; padding: 2px 4px; }
+      .bar-val   { width: 30px; font-size: 11px; }
+
+      .item-name { width: 90px; }
+      .item-pct  { display: none; }
+      .item-val  { width: 30px; }
+
+      .grouped-grid { grid-template-columns: 1fr 1fr; }
+
+      .podium-val     { font-size: 14px; }
+      .top1 .podium-val { font-size: 19px; }
+      .podium-card  { padding: 9px 6px; }
+      .top1.podium-card { padding: 14px 6px; }
+      .podium-name  { font-size: 9px; }
+
+      .chart-wrap { height: 170px; }
+    }
+
+    /* ══════════════════════════════════════════
+       VERY SMALL: ≤ 360px
+       ══════════════════════════════════════════ */
+    @media (max-width: 360px) {
+      .bulan-pill { font-size: 10px; padding: 4px 6px; }
+      .bar-badge  { display: none; }
+      .item-name  { width: 80px; }
+      .grouped-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- TOP HEADER -->
+  <div class="top-header">
+    <div style="min-width:0;">
+      <h1>Total Proses Admin & Chart Penjualan | Dits</h1>
+      <p id="headerSub">Hitung total proses dari 3 sheet sekaligus</p>
+    </div>
+    <div class="top-right">
+      <span class="last-updated" id="lastUpdated"></span>
+      <button class="btn-refresh" id="btnRefresh" onclick="refresh()" title="Refresh data">
+        <i class="ti ti-refresh"></i>
+        <span>Refresh</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="app-body">
+
+    <!-- SIDEBAR (desktop only) -->
+    <div class="sidebar">
+      <div class="sb-section">Sheet</div>
+      <div class="nav-item active" id="nav-combined" onclick="switchTab('combined')">
+        <i class="ti ti-layers-intersect"></i>Gabungan
+      </div>
+      <div class="nav-item" id="nav-sheet0" onclick="switchTab('sheet0')">
+        <i class="ti ti-world"></i>Website
+      </div>
+      <div class="nav-item" id="nav-sheet1" onclick="switchTab('sheet1')">
+        <i class="ti ti-brand-telegram"></i>Telegram
+      </div>
+      <div class="nav-item" id="nav-sheet2" onclick="switchTab('sheet2')">
+        <i class="ti ti-users"></i>Reseller
+      </div>
+      <hr class="sb-divider">
+      <div class="sb-section">Lihat</div>
+      <div class="nav-item active" id="nav-admin" onclick="switchSection('admin')">
+        <i class="ti ti-user-check"></i>Admin
+      </div>
+      <div class="nav-item" id="nav-item" onclick="switchSection('item')">
+        <i class="ti ti-shopping-bag"></i>Item terjual
+      </div>
+    </div>
+
+    <!-- MAIN -->
+    <div class="main">
+
+      <!-- INPUT BAR -->
+      <div class="input-bar">
+
+        <!-- BULAN PILLS -->
+        <div class="bulan-row">
+          <label style="font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;">Bulan</label>
+          <div class="bulan-pills">
+            <div class="bulan-pill" data-val="Januari" onclick="selectBulan(this)">Jan</div>
+            <div class="bulan-pill" data-val="Februari" onclick="selectBulan(this)">Feb</div>
+            <div class="bulan-pill" data-val="Maret" onclick="selectBulan(this)">Mar</div>
+            <div class="bulan-pill" data-val="April" onclick="selectBulan(this)">Apr</div>
+            <div class="bulan-pill" data-val="Mei" onclick="selectBulan(this)">Mei</div>
+            <div class="bulan-pill" data-val="Juni" onclick="selectBulan(this)">Jun</div>
+            <div class="bulan-pill" data-val="Juli" onclick="selectBulan(this)">Jul</div>
+            <div class="bulan-pill" data-val="Agustus" onclick="selectBulan(this)">Agu</div>
+            <div class="bulan-pill" data-val="September" onclick="selectBulan(this)">Sep</div>
+            <div class="bulan-pill" data-val="Oktober" onclick="selectBulan(this)">Okt</div>
+            <div class="bulan-pill" data-val="November" onclick="selectBulan(this)">Nov</div>
+            <div class="bulan-pill" data-val="Desember" onclick="selectBulan(this)">Des</div>
+          </div>
+        </div>
+
+        <!-- TANGGAL + HITUNG -->
+        <div class="input-row">
+          <div class="igroup">
+            <label>Tanggal awal</label>
+            <input type="number" id="mulai" placeholder="dari" min="1" max="31" inputmode="numeric">
+          </div>
+          <div class="tgl-sep">–</div>
+          <div class="igroup">
+            <label>Tanggal akhir</label>
+            <input type="number" id="akhir" placeholder="sampai" min="1" max="31" inputmode="numeric">
+          </div>
+          <button class="btn-hitung" id="btnHitung" onclick="hitung()">Hitung</button>
+        </div>
+
+        <input type="hidden" id="bulan">
+
+        <div class="status-row">
+          <div class="status-text" id="statusText"></div>
+        </div>
+      </div>
+
+      <!-- SCROLL -->
+      <div class="scroll-area">
+        <div class="no-data" id="emptyState">Isi periode di atas lalu klik Hitung.</div>
+        <div id="resultsContainer" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM NAV (mobile only) -->
+  <div class="bottom-nav">
+    <div class="bottom-nav-inner">
+      <div class="bn-item active" id="bn-combined" onclick="switchTab('combined')">
+        <i class="ti ti-layers-intersect"></i>Gabungan
+      </div>
+      <div class="bn-item" id="bn-sheet0" onclick="switchTab('sheet0')">
+        <i class="ti ti-world"></i>Website
+      </div>
+      <div class="bn-item" id="bn-sheet1" onclick="switchTab('sheet1')">
+        <i class="ti ti-brand-telegram"></i>Telegram
+      </div>
+      <div class="bn-item" id="bn-sheet2" onclick="switchTab('sheet2')">
+        <i class="ti ti-users"></i>Reseller
+      </div>
+      <div class="bn-sep"></div>
+      <div class="bn-item active" id="bn-admin" onclick="switchSection('admin')">
+        <i class="ti ti-user-check"></i>Admin
+      </div>
+      <div class="bn-item" id="bn-item-sec" onclick="switchSection('item')">
+        <i class="ti ti-shopping-bag"></i>Item
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+  var _data          = null;
+  var _activeTab     = 'combined';
+  var _activeSection = 'admin';
+  var _chartInstance = null;
+  var _lastParams    = null;
+
+  function selectBulan(el) {
+    document.querySelectorAll('.bulan-pill').forEach(function(p) { p.classList.remove('active'); });
+    el.classList.add('active');
+    document.getElementById('bulan').value = el.getAttribute('data-val');
+  }
+
+  function fmt(n)          { return Number(n || 0).toLocaleString('id-ID'); }
+  function pct(val, total) { return total > 0 ? (val / total * 100).toFixed(1) + '%' : '0%'; }
+  function teamColor(tim)  { return tim === 'FLOPPA' ? 'var(--floppa)' : tim === 'MERPATI' ? 'var(--merpati)' : 'var(--lainnya)'; }
+  function badgeCls(tim)   { return tim === 'FLOPPA' ? 'badge-floppa' : tim === 'MERPATI' ? 'badge-merpati' : 'badge-lainnya'; }
+
+  var _labelInt = null;
+  var _labels   = ['Membuka spreadsheet…','Memfilter tab…','Mengambil data…','Memproses admin…','Menghitung item…','Menyusun rekap…'];
+
+  function startLoading() {
+    var i = 0;
+    setStatus(_labels[0], false);
+    _labelInt = setInterval(function() { i = (i+1) % _labels.length; setStatus(_labels[i], false); }, 2500);
+  }
+  function stopLoading() {
+    if (_labelInt) { clearInterval(_labelInt); _labelInt = null; }
+  }
+  function setStatus(text, isErr) {
+    var el = document.getElementById('statusText');
+    el.textContent = text;
+    el.className   = 'status-text' + (isErr ? ' error' : '');
+  }
+
+  function setLastUpdated() {
+    var el  = document.getElementById('lastUpdated');
+    var now = new Date();
+    var time = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    el.textContent   = 'Update: ' + time;
+    el.style.display = 'inline';
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    ['mulai','akhir'].forEach(function(id) {
+      document.getElementById(id).addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') hitung();
+      });
+    });
+  });
+
+  function hitung() {
+    var bulan = document.getElementById('bulan').value.trim();
+    var mulai = document.getElementById('mulai').value;
+    var akhir = document.getElementById('akhir').value;
+    if (!bulan || !mulai || !akhir) { setStatus('Isi semua field dulu ya.', true); return; }
+
+    var btn    = document.getElementById('btnHitung');
+    var btnRef = document.getElementById('btnRefresh');
+    btn.disabled    = true;
+    btnRef.disabled = true;
+    document.getElementById('emptyState').style.display        = 'none';
+    document.getElementById('resultsContainer').style.display  = 'none';
+    document.getElementById('lastUpdated').style.display       = 'none';
+    btnRef.style.display = 'none';
+    destroyChart();
+    startLoading();
+
+    google.script.run
+      .withSuccessHandler(function(data) {
+        stopLoading();
+        btn.disabled    = false;
+        btnRef.disabled = false;
+        setStatus('Selesai!', false);
+        _data       = data;
+        _lastParams = { bulan: bulan, mulai: mulai, akhir: akhir };
+        _activeTab  = 'combined';
+        updateSidebarTabs();
+        btnRef.style.display = 'inline-flex';
+        setLastUpdated();
+        renderContent();
+      })
+      .withFailureHandler(function(err) {
+        stopLoading();
+        btn.disabled    = false;
+        btnRef.disabled = false;
+        setStatus('❌ ' + err.message, true);
+      })
+      .hitungRekapWeb(bulan, mulai, akhir);
+  }
+
+  function refresh() {
+    if (!_lastParams || !_data) return;
+    var btnRef = document.getElementById('btnRefresh');
+    var btnHit = document.getElementById('btnHitung');
+    btnRef.disabled = true;
+    btnHit.disabled = true;
+    btnRef.classList.add('spinning');
+    setStatus('Memperbarui data...', false);
+
+    google.script.run
+      .withSuccessHandler(function(data) {
+        btnRef.disabled = false;
+        btnHit.disabled = false;
+        btnRef.classList.remove('spinning');
+        setStatus('Data diperbarui!', false);
+        _data = data;
+        setLastUpdated();
+        renderContent();
+      })
+      .withFailureHandler(function(err) {
+        btnRef.disabled = false;
+        btnHit.disabled = false;
+        btnRef.classList.remove('spinning');
+        setStatus('❌ Gagal refresh: ' + err.message, true);
+      })
+      .hitungRekapWeb(_lastParams.bulan, _lastParams.mulai, _lastParams.akhir);
+  }
+
+  function switchTab(key) {
+    if (!_data) return;
+    _activeTab = key;
+    updateSidebarTabs();
+    renderContent();
+    var sa = document.querySelector('.scroll-area');
+    if (sa) sa.scrollTop = 0;
+  }
+
+  function switchSection(sec) {
+    _activeSection = sec;
+    // desktop sidebar
+    document.getElementById('nav-admin').classList.toggle('active', sec === 'admin');
+    document.getElementById('nav-item').classList.toggle('active',  sec === 'item');
+    // mobile bottom nav
+    document.getElementById('bn-admin').classList.toggle('active',    sec === 'admin');
+    document.getElementById('bn-item-sec').classList.toggle('active', sec === 'item');
+    renderContent();
+    var sa = document.querySelector('.scroll-area');
+    if (sa) sa.scrollTop = 0;
+  }
+
+  function updateSidebarTabs() {
+    ['combined','sheet0','sheet1','sheet2'].forEach(function(k) {
+      var dEl = document.getElementById('nav-' + k);
+      var mEl = document.getElementById('bn-' + k);
+      if (dEl) dEl.classList.toggle('active', k === _activeTab);
+      if (mEl) mEl.classList.toggle('active', k === _activeTab);
+    });
+  }
+
+  function getActiveView() {
+    if (!_data) return null;
+    if (_activeTab === 'combined') return { key:'combined', result:_data.combined, skipped:[], totalSheets:null, error:null };
+    var idx = parseInt(_activeTab.replace('sheet',''), 10);
+    var s   = _data.perSheet[idx];
+    if (!s) return null;
+    return { key:_activeTab, result:s, skipped:s.skipped||[], totalSheets:s.totalSheets, error:s.error||null };
+  }
+
+  function renderContent() {
+    if (!_data) return;
+    destroyChart();
+    var view = getActiveView();
+    updateHeaderSub(view);
+    var cont = document.getElementById('resultsContainer');
+    cont.innerHTML = '';
+    cont.style.display = 'block';
+    document.getElementById('emptyState').style.display = 'none';
+
+    if (view.error) {
+      var e = document.createElement('div');
+      e.className = 'error-box'; e.textContent = view.error;
+      cont.appendChild(e); return;
+    }
+
+      var res = view.result || {};
+
+    if (_activeSection === 'admin') {
+      var met = document.createElement('div');
+      met.className = 'metrics-row';
+      met.innerHTML = mkMetric('Grand total', res.grandTotal||0, '') + mkMetric('Tim Floppa', res.floppaTotal||0, 'blue') + mkMetric('Tim Merpati', res.merpatiTotal||0, 'pink');
+      cont.appendChild(met);
+    }
+
+    if (view.key !== 'combined' && view.skipped && view.skipped.length) {
+      var pl = document.createElement('div');
+      pl.className = 'periode-line'; pl.textContent = view.skipped.length + ' tab di-skip';
+      cont.appendChild(pl);
+    }
+
+    if (_activeSection === 'admin') renderAdmin(res, view, cont);
+    else                             renderItem(res, cont, view.key);
+  }
+
+  function updateHeaderSub(view) {
+    var n = 0;
+    if (_activeTab === 'combined') {
+      (_data.perSheet || []).forEach(function(s) { n += (s.totalSheets || 0); });
+    } else {
+      n = (view && view.totalSheets) || 0;
+    }
+    document.getElementById('headerSub').textContent = _data.periodeLabel + ' • ' + n + ' tab diproses';
+  }
+
+  function mkMetric(label, val, cls) {
+    return '<div class="metric-card"><div class="metric-lbl">' + label + '</div><div class="metric-val ' + cls + '">' + fmt(val) + '</div></div>';
+  }
+
+  function renderAdmin(res, view, cont) {
+    var admins = res.admins || [];
+    if (!admins.length) {
+      var nd = document.createElement('div'); nd.className = 'no-data'; nd.textContent = 'Tidak ada data admin.'; cont.appendChild(nd); return;
+    }
+
+    addSecLabel(cont, 'Ranking admin');
+    var card  = document.createElement('div'); card.className = 'card';
+    var maxV  = admins[0].total || 1;
+    admins.forEach(function(a, i) {
+      var color  = teamColor(a.tim);
+      var barPct = Math.round((a.total / maxV) * 100);
+      var row = document.createElement('div'); row.className = 'bar-row';
+      row.innerHTML =
+        '<div class="bar-rank">' + (i+1) + '</div>' +
+        '<div class="bar-name"><div class="bar-dot" style="background:' + color + '"></div><span class="bar-name-text">' + a.admin + '</span></div>' +
+        '<div class="bar-track"><div class="bar-fill" style="width:' + barPct + '%;background:' + color + '"></div></div>' +
+        '<div class="bar-val">' + fmt(a.total) + '</div>' +
+        '<div class="bar-badge ' + badgeCls(a.tim) + '">' + a.tim + '</div>';
+      card.appendChild(row);
+    });
+
+    var leg = document.createElement('div'); leg.className = 'legend';
+    leg.innerHTML =
+      '<span><span class="legend-dot" style="background:var(--floppa)"></span>Floppa</span>' +
+      '<span><span class="legend-dot" style="background:var(--merpati)"></span>Merpati</span>' +
+      '<span><span class="legend-dot" style="background:var(--lainnya)"></span>Lainnya</span>';
+    card.appendChild(leg);
+
+    if (view.key !== 'combined' && view.skipped.length) {
+      var sk = document.createElement('div'); sk.className = 'skipped-box';
+      sk.innerHTML = '<strong>Tab di-skip:</strong> ' + view.skipped.join(', ');
+      card.appendChild(sk);
+    }
+    cont.appendChild(card);
+
+    var floppa  = admins.filter(function(a) { return a.tim === 'FLOPPA'; });
+    var merpati = admins.filter(function(a) { return a.tim === 'MERPATI'; });
+    var lainnya = admins.filter(function(a) { return a.tim === 'LAINNYA'; });
+
+    if (floppa.length || merpati.length || lainnya.length) {
+      addSecLabel(cont, 'Per tim');
+      var grid = document.createElement('div'); grid.className = 'grouped-grid';
+      if (floppa.length)  grid.innerHTML += buildGroupCard(floppa,  'Tim Floppa',  'floppa',  res.floppaTotal);
+      if (merpati.length) grid.innerHTML += buildGroupCard(merpati, 'Tim Merpati', 'merpati', res.merpatiTotal);
+      cont.appendChild(grid);
+
+      if (lainnya.length) {
+        var lEl = document.createElement('div'); lEl.className = 'group-lainnya';
+        lEl.innerHTML = '<div class="group-title lainnya">Lainnya</div>' +
+          lainnya.map(function(a) { return '<div class="group-member"><span class="gname">' + a.admin + '</span><span class="gval">' + fmt(a.total) + '</span></div>'; }).join('');
+        cont.appendChild(lEl);
+      }
+    }
+  }
+
+  function buildGroupCard(members, title, cls, total) {
+    return '<div class="group-card"><div class="group-title ' + cls + '">' + title + '</div>' +
+      members.map(function(a) { return '<div class="group-member"><span class="gname">' + a.admin + '</span><span class="gval">' + fmt(a.total) + '</span></div>'; }).join('') +
+      '<div class="group-footer"><span>Total</span><span>' + fmt(total) + '</span></div></div>';
+  }
+
+  function renderItem(res, cont, suffix) {
+  var items = res.items || [];
+  var total = res.totalItemTerjual || 0;
+
+  if (!items.length) {
+    var nd = document.createElement('div'); nd.className = 'no-data'; nd.textContent = 'Tidak ada data item terjual.'; cont.appendChild(nd); return;
+  }
+
+  var metEl = document.createElement('div');
+  metEl.className = 'metrics-row';
+  metEl.innerHTML =
+    '<div class="metric-card"><div class="metric-lbl">Grand total</div><div class="metric-val">' + fmt(res.grandTotal||0) + '</div></div>' +
+    '<div class="metric-card"><div class="metric-lbl">Total item terjual</div><div class="metric-val purple">' + fmt(total) + '</div></div>' +
+    '<div class="metric-card"><div class="metric-lbl">Jenis item</div><div class="metric-val">' + items.length + '</div></div>';
+  cont.appendChild(metEl);
+
+    addSecLabel(cont, 'Top 3 item terjual');
+    var podCard = document.createElement('div'); podCard.className = 'card';
+    var top3 = items.slice(0, 3);
+
+    function makePod(item, rank, isBig) {
+      var v = item ? item.terjual : 0, n = item ? item.nama : '-', p = item ? pct(v, total) : '0%';
+      return '<div class="podium-card' + (isBig ? ' top1' : '') + '">' +
+        '<div class="podium-rank">#' + rank + '</div>' +
+        '<div class="podium-name">' + n + '</div>' +
+        '<div class="podium-val">' + fmt(v) + '</div>' +
+        '<div class="podium-pct">' + p + '</div></div>';
+    }
+
+    var pr = document.createElement('div'); pr.className = 'podium-row';
+    pr.innerHTML = makePod(top3[1]||null, 2, false) + makePod(top3[0]||null, 1, true) + makePod(top3[2]||null, 3, false);
+    podCard.appendChild(pr);
+    cont.appendChild(podCard);
+
+    addSecLabel(cont, 'Distribusi item');
+    var chartCard = document.createElement('div'); chartCard.className = 'card';
+    var top6 = items.slice(0, 6);
+    var othersTotal = items.slice(6).reduce(function(s,i) { return s+i.terjual; }, 0);
+    var cLabels = top6.map(function(i) { return i.nama; });
+    var cData   = top6.map(function(i) { return i.terjual; });
+    if (othersTotal > 0) { cLabels.push('Lainnya'); cData.push(othersTotal); }
+    var COLORS  = ['#8b5cf6','#3b82f6','#ec4899','#f59e0b','#10b981','#ef4444','#6b7280'];
+
+    var legHtml = '<div class="chart-legend">';
+    cLabels.forEach(function(lbl, i) {
+      legHtml += '<span style="display:flex;align-items:center;gap:4px;">' +
+        '<span class="chart-leg-dot" style="background:' + COLORS[i%COLORS.length] + '"></span>' + lbl + ' ' + pct(cData[i], total) + '</span>';
+    });
+    legHtml += '</div>';
+    chartCard.innerHTML = legHtml;
+
+    var chartId = 'donut_' + suffix + '_' + Date.now();
+    var wrap = document.createElement('div'); wrap.className = 'chart-wrap';
+    wrap.innerHTML = '<canvas id="' + chartId + '"></canvas>';
+    chartCard.appendChild(wrap);
+    cont.appendChild(chartCard);
+
+    setTimeout(function() {
+      var ctx = document.getElementById(chartId);
+      if (!ctx) return;
+      _chartInstance = new Chart(ctx, {
+        type: 'doughnut',
+        data: { labels: cLabels, datasets: [{ data: cData, backgroundColor: COLORS.slice(0, cLabels.length), borderWidth: 2, borderColor: '#18181b' }] },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: function(c) { return ' ' + fmt(c.parsed) + ' (' + pct(c.parsed, total) + ')'; } } }
+          }
+        }
+      });
+    }, 0);
+
+    addSecLabel(cont, 'Semua item');
+    var listCard = document.createElement('div'); listCard.className = 'card';
+    var maxI = items[0].terjual || 1;
+    items.forEach(function(it) {
+      var bp = Math.round((it.terjual / maxI) * 100);
+      var row = document.createElement('div'); row.className = 'item-row';
+      row.innerHTML =
+        '<div class="item-name">' + it.nama + '</div>' +
+        '<div class="item-track"><div class="item-fill" style="width:' + bp + '%"></div></div>' +
+        '<div class="item-val">' + fmt(it.terjual) + '</div>' +
+        '<div class="item-pct">' + pct(it.terjual, total) + '</div>';
+      listCard.appendChild(row);
+    });
+    cont.appendChild(listCard);
+  }
+
+  function addSecLabel(cont, text) {
+    var el = document.createElement('div'); el.className = 'sec-lbl'; el.textContent = text; cont.appendChild(el);
+  }
+
+  function destroyChart() {
+    if (_chartInstance) { _chartInstance.destroy(); _chartInstance = null; }
+  }
+</script>
+</body>
+</html>
