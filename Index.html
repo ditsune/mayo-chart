@@ -481,12 +481,12 @@
   <!-- TOP HEADER -->
   <div class="top-header">
     <div style="min-width:0;">
-      <h1>Total Proses Admin & Chart Penjualan | Dits</h1>
+      <h1>Rekap Sheet Mayo | Dits</h1>
       <p id="headerSub">Hitung total proses dari 3 sheet sekaligus</p>
     </div>
     <div class="top-right">
       <span class="last-updated" id="lastUpdated"></span>
-      <button class="btn-refresh" id="btnRefresh" onclick="refresh()" title="Refresh data">
+      <button class="btn-refresh" id="btnRefresh" onclick="refresh()" title="Refresh data (lewati cache)">
         <i class="ti ti-refresh"></i>
         <span>Refresh</span>
       </button>
@@ -621,12 +621,12 @@
   function badgeCls(tim)   { return tim === 'FLOPPA' ? 'badge-floppa' : tim === 'MERPATI' ? 'badge-merpati' : 'badge-lainnya'; }
 
   var _labelInt = null;
-  var _labels   = ['Membuka spreadsheet…','Memfilter tab…','Mengambil data…','Memproses admin…','Menghitung item…','Menyusun rekap…'];
+  var _labels   = ['Mengambil daftar tab (paralel)…','Mengambil data (paralel)…','Menyusun rekap…'];
 
   function startLoading() {
     var i = 0;
     setStatus(_labels[0], false);
-    _labelInt = setInterval(function() { i = (i+1) % _labels.length; setStatus(_labels[i], false); }, 2500);
+    _labelInt = setInterval(function() { i = (i+1) % _labels.length; setStatus(_labels[i], false); }, 1500);
   }
   function stopLoading() {
     if (_labelInt) { clearInterval(_labelInt); _labelInt = null; }
@@ -690,7 +690,7 @@
         btnRef.disabled = false;
         setStatus('❌ ' + err.message, true);
       })
-      .hitungRekapWeb(bulan, mulai, akhir);
+      .hitungRekapWeb(bulan, mulai, akhir, false); // false = boleh pakai cache kalau ada
   }
 
   function refresh() {
@@ -700,7 +700,7 @@
     btnRef.disabled = true;
     btnHit.disabled = true;
     btnRef.classList.add('spinning');
-    setStatus('Memperbarui data...', false);
+    setStatus('Memperbarui data (bypass cache)...', false);
 
     google.script.run
       .withSuccessHandler(function(data) {
@@ -718,7 +718,7 @@
         btnRef.classList.remove('spinning');
         setStatus('❌ Gagal refresh: ' + err.message, true);
       })
-      .hitungRekapWeb(_lastParams.bulan, _lastParams.mulai, _lastParams.akhir);
+      .hitungRekapWeb(_lastParams.bulan, _lastParams.mulai, _lastParams.akhir, true); // true = paksa lewati cache
   }
 
   function switchTab(key) {
