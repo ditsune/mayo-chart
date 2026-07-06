@@ -1,7 +1,12 @@
 // ============================================================
 //  KALKULATOR TOTAL PROSES - MULTI SHEET WEB APP
 //  Google Apps Script (HtmlService)
-//  Versi: 5.0 — Tambah fitur item terjual
+//  Versi: 6.0 — Performance overhaul:
+//   - Parallel fetch (UrlFetchApp.fetchAll) ganti sequential forEach
+//   - Ambil daftar tab via Sheets REST API (bukan SpreadsheetApp.getSheets)
+//   - batchGet dibatasi kolom + UNFORMATTED_VALUE (payload lebih kecil, lebih cepat)
+//   - Result caching per (bulan+range) supaya user lain yg minta periode sama dapet instant
+//   - Progress cache jadi per-user (getUserCache), bukan global
 // ============================================================
 
 // ⚠️ KONFIGURASI 3 SPREADSHEET DI SINI
@@ -39,12 +44,14 @@ const MONTH_ALIASES = {
   desember:  ["desember", "december", "des", "dec"],
 };
 
-const PROGRESS_KEY = "CALC_PROGRESS";
+const PROGRESS_KEY   = "CALC_PROGRESS";
+const RESULT_CACHE_TTL   = 120; // detik — cache hasil hitung per periode
+const CACHE_VALUE_MAX_BYTES = 95000; // batas aman CacheService (limit sebenarnya 100KB/key)
 
 // ── WEB APP ENTRY POINT ──────────────────────────────────────
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('Index')
-    .setTitle('Total Proses & Item')
+    .setTitle('Rekap Sheet Mayo')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
@@ -66,24 +73,104 @@ function capitalize(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-// ── PROGRESS ─────────────────────────────────────────────────
+// ── PROGRESS (per-user, bukan global lagi) ───────────────────
 function setProgress(obj) {
   try {
-    CacheService.getScriptCache().put(PROGRESS_KEY, JSON.stringify(obj), 300);
+    CacheService.getUserCache().put(PROGRESS_KEY, JSON.stringify(obj), 300);
   } catch (e) {}
 }
 
 function getProgress() {
   try {
-    const raw = CacheService.getScriptCache().get(PROGRESS_KEY);
+    const raw = CacheService.getUserCache().get(PROGRESS_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch (e) {
     return null;
   }
 }
 
+// ── AMBIL OAUTH TOKEN UNTUK PANGGIL SHEETS REST API LANGSUNG ─
+// (dipakai biar bisa fetchAll / paralel — advanced service Sheets.* tidak bisa)
+function authHeader_() {
+  return { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() };
+}
+
+function columnToLetter_(col) {
+  let letter = '';
+  while (col > 0) {
+    const rem = (col - 1) % 26;
+    letter = String.fromCharCode(65 + rem) + letter;
+    col = Math.floor((col - 1) / 26);
+  }
+  return letter;
+}
+
+// ── AMBIL DAFTAR NAMA TAB UNTUK SEMUA SPREADSHEET SEKALIGUS (PARALEL) ─
+function fetchAllSheetTitles_(configs) {
+  const requests = configs.map(c => ({
+    url: `https://sheets.googleapis.com/v4/spreadsheets/${c.id}?fields=sheets.properties.title`,
+    headers: authHeader_(),
+    muteHttpExceptions: true,
+  }));
+
+  const responses = UrlFetchApp.fetchAll(requests);
+
+  return responses.map((res, i) => {
+    const code = res.getResponseCode();
+    if (code !== 200) {
+      throw new Error(`Gagal ambil daftar tab "${configs[i].label}" (HTTP ${code}): ${res.getContentText().slice(0, 200)}`);
+    }
+    const json = JSON.parse(res.getContentText());
+    return (json.sheets || []).map(s => s.properties.title);
+  });
+}
+
+// ── AMBIL VALUES UNTUK SEMUA SPREADSHEET SEKALIGUS (PARALEL) ─────
+// targetSheetsPerConfig[i] = array nama tab yang mau diambil utk configs[i]
+function fetchAllBatchValues_(configs, targetSheetsPerConfig) {
+  const requestSpecs = configs.map((c, i) => {
+    const sheetNames = targetSheetsPerConfig[i];
+    if (!sheetNames.length) return null;
+
+    const maxCol    = Math.max(c.adminCol, c.prosesCol, c.itemCol, c.terjualCol) + 2; // +2 buffer aman
+    const colLetter = columnToLetter_(maxCol);
+
+    const rangeParams = sheetNames
+      .map(n => `ranges=${encodeURIComponent(`'${n.replace(/'/g, "''")}'!A1:${colLetter}`)}`)
+      .join('&');
+
+    return {
+      url: `https://sheets.googleapis.com/v4/spreadsheets/${c.id}/values:batchGet?${rangeParams}&valueRenderOption=UNFORMATTED_VALUE`,
+      headers: authHeader_(),
+      muteHttpExceptions: true,
+    };
+  });
+
+  const validIdx = [];
+  const validRequests = [];
+  requestSpecs.forEach((r, i) => { if (r) { validIdx.push(i); validRequests.push(r); } });
+
+  const responses = validRequests.length ? UrlFetchApp.fetchAll(validRequests) : [];
+
+  const results = new Array(configs.length).fill(null);
+  responses.forEach((res, k) => {
+    const i = validIdx[k];
+    const code = res.getResponseCode();
+    if (code !== 200) {
+      throw new Error(`Gagal ambil data "${configs[i].label}" (HTTP ${code}): ${res.getContentText().slice(0, 200)}`);
+    }
+    results[i] = JSON.parse(res.getContentText()).valueRanges || [];
+  });
+  return results;
+}
+
+// ── CACHE KEY HELPER ──────────────────────────────────────────
+function buildCacheKey_(bulan, tanggalMulai, tanggalAkhir) {
+  return `REKAP_${resolveCanonicalMonth(bulan)}_${tanggalMulai}_${tanggalAkhir}`;
+}
+
 // ── DIPANGGIL DARI WEB (google.script.run) ───────────────────
-function hitungRekapWeb(bulan, tanggalMulai, tanggalAkhir) {
+function hitungRekapWeb(bulan, tanggalMulai, tanggalAkhir, bypassCache) {
   bulan = String(bulan).trim().toLowerCase();
   tanggalMulai = parseInt(tanggalMulai, 10);
   tanggalAkhir = parseInt(tanggalAkhir, 10);
@@ -92,102 +179,96 @@ function hitungRekapWeb(bulan, tanggalMulai, tanggalAkhir) {
   if (isNaN(tanggalMulai) || tanggalMulai < 1 || tanggalMulai > 31) throw new Error("Tanggal mulai tidak valid (1-31).");
   if (isNaN(tanggalAkhir) || tanggalAkhir < tanggalMulai || tanggalAkhir > 31) throw new Error("Tanggal akhir tidak valid.");
 
+  const cacheKey = buildCacheKey_(bulan, tanggalMulai, tanggalAkhir);
+
+  // ── Cek cache dulu (kecuali user klik Refresh / bypassCache) ──
+  if (!bypassCache) {
+    try {
+      const cached = CacheService.getScriptCache().get(cacheKey);
+      if (cached) {
+        setProgress({ current: 1, total: 1, text: "Diambil dari cache", done: true });
+        return JSON.parse(cached);
+      }
+    } catch (e) { /* cache miss/corrupt, lanjut hitung normal */ }
+  }
+
   const bulanAliases     = resolveMonthAliases(bulan);
   const bulanCapitalized = capitalize(resolveCanonicalMonth(bulan));
   const periodeLabel     = `${tanggalMulai} - ${tanggalAkhir} ${bulanCapitalized} 2026`;
 
-  const totalConfig  = SHEETS_CONFIG.length;
-  const combinedMap  = {};
-  const combinedItem = {};  // map gabungan item terjual
-  const perSheet     = [];
+  setProgress({ current: 0, total: 3, text: "Mengambil daftar tab (paralel)..." });
 
-  setProgress({ current: 0, total: totalConfig, text: "Memulai..." });
+  // ── TAHAP 1: ambil nama semua tab dari 3 spreadsheet SEKALIGUS ──
+  const allTitles = fetchAllSheetTitles_(SHEETS_CONFIG);
+
+  const targetSheetsPerConfig = allTitles.map(titles =>
+    titles.filter(name => isTargetSheet(name, bulanAliases, tanggalMulai, tanggalAkhir))
+  );
+
+  setProgress({ current: 1, total: 3, text: "Mengambil data (paralel)..." });
+
+  // ── TAHAP 2: ambil isi semua tab yang cocok dari 3 spreadsheet SEKALIGUS ──
+  const allValueRanges = fetchAllBatchValues_(SHEETS_CONFIG, targetSheetsPerConfig);
+
+  setProgress({ current: 2, total: 3, text: "Menyusun rekap..." });
+
+  // ── TAHAP 3: proses data (murni lokal, cepat) ──
+  const combinedMap  = {};
+  const combinedItem = {};
+  const perSheet      = [];
 
   SHEETS_CONFIG.forEach((config, idx) => {
-    setProgress({
-      current: idx,
-      total: totalConfig,
-      text: `Membuka ${config.label}...`,
-    });
+    const targetSheets = targetSheetsPerConfig[idx];
 
-    try {
-      const ss = SpreadsheetApp.openById(config.id);
-
-      const targetSheets = ss.getSheets().filter(s =>
-        isTargetSheet(s.getName(), bulanAliases, tanggalMulai, tanggalAkhir)
-      );
-
-      if (targetSheets.length === 0) {
-        setProgress({ current: idx + 1, total: totalConfig, text: `${config.label}: tidak ada tab yang cocok` });
-        perSheet.push({
-          label: config.label, totalSheets: 0, skipped: [],
-          admins: [], floppaTotal: 0, merpatiTotal: 0, grandTotal: 0,
-          items: [], totalItemTerjual: 0,
-        });
-        return;
-      }
-
-      setProgress({ current: idx, total: totalConfig, text: `${config.label}: mengambil ${targetSheets.length} tab...` });
-
-      const ranges      = targetSheets.map(s => s.getName());
-      const batchResult = Sheets.Spreadsheets.Values.batchGet(config.id, { ranges });
-      const valueRanges = batchResult.valueRanges || [];
-
-      const adminMap = {};
-      const itemMap  = {};
-      const skipped  = [];
-
-      valueRanges.forEach((vr, i) => {
-        const sheetName = ranges[i];
-        const rows      = vr.values || [];
-
-        setProgress({ current: idx, total: totalConfig, text: `${config.label}: memproses "${sheetName}" (${i + 1}/${ranges.length})` });
-
-        if (rows.length === 0) { skipped.push(sheetName); return; }
-
-        // Baca data admin/proses
-        const hasilAdmin = bacaDataSheet(rows, config.adminCol, config.prosesCol);
-        if (!hasilAdmin) { skipped.push(sheetName); return; }
-
-        hasilAdmin.forEach(({ admin, proses }) => {
-          let key = admin.toUpperCase().trim();
-          if (NAME_ALIASES[key]) key = NAME_ALIASES[key];
-          adminMap[key]    = (adminMap[key]    || 0) + proses;
-          combinedMap[key] = (combinedMap[key] || 0) + proses;
-        });
-
-        // Baca data item terjual
-        const hasilItem = bacaDataItem(rows, config.itemCol, config.terjualCol);
-        hasilItem.forEach(({ nama, terjual }) => {
-          itemMap[nama]       = (itemMap[nama]       || 0) + terjual;
-          combinedItem[nama]  = (combinedItem[nama]  || 0) + terjual;
-        });
-      });
-
-      setProgress({ current: idx + 1, total: totalConfig, text: `${config.label} selesai` });
-
+    if (targetSheets.length === 0) {
       perSheet.push({
-        label: config.label,
-        totalSheets: targetSheets.length,
-        skipped,
-        ...buildSortedResult(adminMap),
-        ...buildItemResult(itemMap),
-      });
-
-    } catch (e) {
-      setProgress({ current: idx + 1, total: totalConfig, text: `${config.label} error: ${e.message}` });
-      perSheet.push({
-        label: config.label,
-        error: `Gagal: ${e.message}`,
-        totalSheets: 0, skipped: [], admins: [], floppaTotal: 0, merpatiTotal: 0, grandTotal: 0,
+        label: config.label, totalSheets: 0, skipped: [],
+        admins: [], floppaTotal: 0, merpatiTotal: 0, grandTotal: 0,
         items: [], totalItemTerjual: 0,
       });
+      return;
     }
+
+    const valueRanges = allValueRanges[idx] || [];
+    const adminMap = {};
+    const itemMap  = {};
+    const skipped  = [];
+
+    valueRanges.forEach((vr, i) => {
+      const sheetName = targetSheets[i];
+      const rows      = vr.values || [];
+
+      if (rows.length === 0) { skipped.push(sheetName); return; }
+
+      const hasilAdmin = bacaDataSheet(rows, config.adminCol, config.prosesCol);
+      if (!hasilAdmin) { skipped.push(sheetName); return; }
+
+      hasilAdmin.forEach(({ admin, proses }) => {
+        let key = admin.toUpperCase().trim();
+        if (NAME_ALIASES[key]) key = NAME_ALIASES[key];
+        adminMap[key]    = (adminMap[key]    || 0) + proses;
+        combinedMap[key] = (combinedMap[key] || 0) + proses;
+      });
+
+      const hasilItem = bacaDataItem(rows, config.itemCol, config.terjualCol);
+      hasilItem.forEach(({ nama, terjual }) => {
+        itemMap[nama]      = (itemMap[nama]      || 0) + terjual;
+        combinedItem[nama] = (combinedItem[nama] || 0) + terjual;
+      });
+    });
+
+    perSheet.push({
+      label: config.label,
+      totalSheets: targetSheets.length,
+      skipped,
+      ...buildSortedResult(adminMap),
+      ...buildItemResult(itemMap),
+    });
   });
 
-  setProgress({ current: totalConfig, total: totalConfig, text: "Selesai!", done: true });
+  setProgress({ current: 3, total: 3, text: "Selesai!", done: true });
 
-  return {
+  const finalResult = {
     periodeLabel,
     perSheet,
     combined: {
@@ -195,6 +276,16 @@ function hitungRekapWeb(bulan, tanggalMulai, tanggalAkhir) {
       ...buildItemResult(combinedItem),
     },
   };
+
+  // ── Simpan ke cache buat user lain yang minta periode sama ──
+  try {
+    const serialized = JSON.stringify(finalResult);
+    if (serialized.length < CACHE_VALUE_MAX_BYTES) {
+      CacheService.getScriptCache().put(cacheKey, serialized, RESULT_CACHE_TTL);
+    }
+  } catch (e) { /* kalau kegedean / gagal cache, gapapa, tetep return hasil */ }
+
+  return finalResult;
 }
 
 // ── HELPER: SUSUN HASIL ADMIN TERURUT ────────────────────────
@@ -285,8 +376,6 @@ function bacaDataSheet(rows, adminCol, prosesCol) {
 }
 
 // ── BACA DATA ITEM TERJUAL ───────────────────────────────────
-// Cari baris yang mengandung "nama item" sebagai header,
-// lalu baca baris berikutnya sampai ketemu "total" atau baris kosong.
 function bacaDataItem(rows, itemCol, terjualCol) {
   itemCol    = itemCol    ?? 10;
   terjualCol = terjualCol ?? 11;
@@ -298,7 +387,6 @@ function bacaDataItem(rows, itemCol, terjualCol) {
     const row = rows[r];
 
     if (!headerFound) {
-      // Cari header "nama item" di kolom mana saja
       const hasHeader = row.some(cell =>
         String(cell ?? "").trim().toLowerCase() === "nama item"
       );
@@ -306,18 +394,17 @@ function bacaDataItem(rows, itemCol, terjualCol) {
       continue;
     }
 
-    const namaRaw   = String(row[itemCol]    ?? "").trim();
+    const namaRaw    = String(row[itemCol]    ?? "").trim();
     const terjualRaw = String(row[terjualCol] ?? "").trim();
 
-    // Stop saat ketemu baris "total" atau nama kosong setelah sudah dapat data
     if (namaRaw.toLowerCase() === "total") break;
     if (!namaRaw) {
-      if (result.length > 0) break;  // baris kosong setelah data = selesai
+      if (result.length > 0) break;
       continue;
     }
 
     const terjual = Number(terjualRaw);
-    if (isNaN(terjual) || terjual <= 0) continue;  // skip item 0 terjual
+    if (isNaN(terjual) || terjual <= 0) continue;
 
     result.push({ nama: namaRaw, terjual });
   }
