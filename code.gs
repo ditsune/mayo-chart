@@ -1,34 +1,43 @@
 // ============================================================
-//  KALKULATOR TOTAL PROSES - MULTI SHEET WEB APP
+//  MAYO TOOLS — Rekap Proses/Item + Saldo Akun (Merged Project)
 //  Google Apps Script (HtmlService)
-//  Versi: 6.0 — Performance overhaul:
-//   - Parallel fetch (UrlFetchApp.fetchAll) ganti sequential forEach
-//   - Ambil daftar tab via Sheets REST API (bukan SpreadsheetApp.getSheets)
-//   - batchGet dibatasi kolom + UNFORMATTED_VALUE (payload lebih kecil, lebih cepat)
-//   - Result caching per (bulan+range) supaya user lain yg minta periode sama dapet instant
-//   - Progress cache jadi per-user (getUserCache), bukan global
 // ============================================================
 
-// ⚠️ KONFIGURASI 3 SPREADSHEET DI SINI
+// ⚠️ KONFIGURASI SPREADSHEET — REKAP PROSES/ITEM
 const SHEETS_CONFIG = [
   { id: "19yETtrXqCAf_fjhfHgtqaRhKLXRraM8P-uRwW_r10Hg", label: "Sheet Website",  adminCol: 13, prosesCol: 14, itemCol: 10, terjualCol: 11 },
   { id: "1GmOzkKSjUaFkGGiQC4ITrFAzdrqYUhf_n24HnN-zP1U", label: "Sheet Telegram", adminCol: 14, prosesCol: 15, itemCol: 11, terjualCol: 12 },
   { id: "179HJQc9q-UssQNjlMtuxE6HNl-GkIpSGJqOaXyC3n_U", label: "Sheet Reseller", adminCol: 13, prosesCol: 14, itemCol: 10, terjualCol: 11 },
 ];
 
-// ── KONFIGURASI TIM ─────────────────────────────────────────
+// ⚠️ KONFIGURASI SPREADSHEET — SALDO AKUN
+const AKUN_SHEETS_CONFIG = [
+  { id: "1GmOzkKSjUaFkGGiQC4ITrFAzdrqYUhf_n24HnN-zP1U", label: "Telegram", akunCol: 1, nominalCol: 5, statusCol: 6 },  // B=1, F=5, G=6
+  { id: "179HJQc9q-UssQNjlMtuxE6HNl-GkIpSGJqOaXyC3n_U", label: "Reseller", akunCol: 1, nominalCol: 4, statusCol: 5 },  // B=1, E=4, F=5
+  { id: "19yETtrXqCAf_fjhfHgtqaRhKLXRraM8P-uRwW_r10Hg", label: "Website",  akunCol: 7, nominalCol: 4, statusCol: 5 },  // H=7, E=4, F=5
+];
+
+// ── KONFIGURASI TIM (dipakai rekap proses) ──────────────────
 const TIM_CONFIG = {
   FLOPPA:  ["KRISNA", "ADIT", "INDRA"],
   MERPATI: ["RIZKI", "RANGGA", "ARI PERSIB"],
 };
-
-const NAME_ALIASES = {
-  "ARI PERSIB": "ARI",
-};
-
+const NAME_ALIASES = { "ARI PERSIB": "ARI" };
 const SKIP_KEYWORDS = ["admin", "proses", "total proses", "total", ""];
 
-// ── ALIAS NAMA BULAN ──────────────────────────────────────────
+// ── HARGA TABLE (dipakai saldo akun) ────────────────────────
+const HARGA_TABLE = {
+  80:0.99, 160:1.98, 240:2.97, 320:3.96, 500:4.99,
+  1000:9.99, 1080:10.98, 1160:11.97, 1240:12.96, 1320:13.95, 1500:14.98,
+  2000:19.99, 2500:24.98, 3000:29.98, 3500:34.98, 4000:39.98, 4500:44.98,
+  5000:49.98, 5500:54.98, 6000:59.97, 6500:64.97, 7000:69.97, 7500:74.97,
+  8000:79.96, 8500:84.96, 9000:89.96, 9500:94.96, 10000:99.95,
+  15000:149.92, 17000:169.91, 31000:309.84
+};
+const HARGA_TABLE_PREM = { 450: 5.99, 1000: 9.99, 2200: 19.99 };
+const HARGA_PER_DENOM_SEN = { 2000: 1999, 1000: 999, 500: 499, 80: 99 };
+
+// ── ALIAS NAMA BULAN (SHARED) ────────────────────────────────
 const MONTH_ALIASES = {
   januari:   ["januari", "january", "jan"],
   februari:  ["februari", "february", "feb", "pebruari", "peb"],
@@ -45,17 +54,20 @@ const MONTH_ALIASES = {
 };
 
 const PROGRESS_KEY   = "CALC_PROGRESS";
-const RESULT_CACHE_TTL   = 120; // detik — cache hasil hitung per periode
+const RESULT_CACHE_TTL   = 120; // detik — cache hasil hitung per periode (rekap proses)
 const CACHE_VALUE_MAX_BYTES = 95000; // batas aman CacheService (limit sebenarnya 100KB/key)
 
 // ── WEB APP ENTRY POINT ──────────────────────────────────────
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('Index')
-    .setTitle('Rekap Sheet Mayo')
+    .setTitle('Mayo Tools by Dits')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
-// ── HELPER ALIAS BULAN ────────────────────────────────────────
+// ══════════════════════════════════════════════════════════
+//  SHARED HELPERS (dipakai kedua fitur — jangan diduplikat!)
+// ══════════════════════════════════════════════════════════
+
 function resolveCanonicalMonth(input) {
   const lower = input.toLowerCase().trim();
   for (const canonical in MONTH_ALIASES) {
@@ -73,24 +85,6 @@ function capitalize(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-// ── PROGRESS (per-user, bukan global lagi) ───────────────────
-function setProgress(obj) {
-  try {
-    CacheService.getUserCache().put(PROGRESS_KEY, JSON.stringify(obj), 300);
-  } catch (e) {}
-}
-
-function getProgress() {
-  try {
-    const raw = CacheService.getUserCache().get(PROGRESS_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch (e) {
-    return null;
-  }
-}
-
-// ── AMBIL OAUTH TOKEN UNTUK PANGGIL SHEETS REST API LANGSUNG ─
-// (dipakai biar bisa fetchAll / paralel — advanced service Sheets.* tidak bisa)
 function authHeader_() {
   return { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() };
 }
@@ -105,7 +99,8 @@ function columnToLetter_(col) {
   return letter;
 }
 
-// ── AMBIL DAFTAR NAMA TAB UNTUK SEMUA SPREADSHEET SEKALIGUS (PARALEL) ─
+// Ambil daftar nama tab untuk semua spreadsheet sekaligus (paralel).
+// configs bisa SHEETS_CONFIG ATAU AKUN_SHEETS_CONFIG — generik.
 function fetchAllSheetTitles_(configs) {
   const requests = configs.map(c => ({
     url: `https://sheets.googleapis.com/v4/spreadsheets/${c.id}?fields=sheets.properties.title`,
@@ -125,14 +120,16 @@ function fetchAllSheetTitles_(configs) {
   });
 }
 
-// ── AMBIL VALUES UNTUK SEMUA SPREADSHEET SEKALIGUS (PARALEL) ─────
-// targetSheetsPerConfig[i] = array nama tab yang mau diambil utk configs[i]
+// Ambil values untuk semua spreadsheet sekaligus (paralel).
+// Menerima colConfig fleksibel: fungsi ini butuh tahu kolom mana saja yang
+// perlu di-buffer, jadi kita hitung maxCol dari semua field angka di config.
 function fetchAllBatchValues_(configs, targetSheetsPerConfig) {
   const requestSpecs = configs.map((c, i) => {
     const sheetNames = targetSheetsPerConfig[i];
     if (!sheetNames.length) return null;
 
-    const maxCol    = Math.max(c.adminCol, c.prosesCol, c.itemCol, c.terjualCol) + 2; // +2 buffer aman
+    const colFields = Object.keys(c).filter(k => k.endsWith('Col')).map(k => c[k]);
+    const maxCol    = Math.max.apply(null, colFields) + 2; // +2 buffer aman
     const colLetter = columnToLetter_(maxCol);
 
     const rangeParams = sheetNames
@@ -164,12 +161,52 @@ function fetchAllBatchValues_(configs, targetSheetsPerConfig) {
   return results;
 }
 
-// ── CACHE KEY HELPER ──────────────────────────────────────────
+function isTargetSheet(name, bulanAliases, tanggalMulai, tanggalAkhir) {
+  const lower = name.toLowerCase().trim();
+  const blacklist = ["template", "akun", "summary", "log", "total proses"];
+  if (blacklist.some(b => lower.includes(b))) return false;
+
+  let bulanIdx = -1;
+  for (const alias of bulanAliases) {
+    const idx = lower.indexOf(alias);
+    if (idx !== -1) { bulanIdx = idx; break; }
+  }
+  if (bulanIdx === -1) return false;
+
+  const prefix = lower.substring(0, bulanIdx).trim();
+  const digits = prefix.replace(/\D/g, "");
+  if (!digits) return false;
+
+  const tgl = parseInt(digits, 10);
+  if (isNaN(tgl)) return false;
+  return tgl >= tanggalMulai && tgl <= tanggalAkhir;
+}
+
+// ── PROGRESS (per-user — dipakai rekap proses) ───────────────
+function setProgress(obj) {
+  try {
+    CacheService.getUserCache().put(PROGRESS_KEY, JSON.stringify(obj), 300);
+  } catch (e) {}
+}
+
+function getProgress() {
+  try {
+    const raw = CacheService.getUserCache().get(PROGRESS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function buildCacheKey_(bulan, tanggalMulai, tanggalAkhir) {
   return `REKAP_${resolveCanonicalMonth(bulan)}_${tanggalMulai}_${tanggalAkhir}`;
 }
 
-// ── DIPANGGIL DARI WEB (google.script.run) ───────────────────
+
+// ══════════════════════════════════════════════════════════
+//  FITUR 1 — REKAP TOTAL PROSES & ITEM (Website/Telegram/Reseller)
+// ══════════════════════════════════════════════════════════
+
 function hitungRekapWeb(bulan, tanggalMulai, tanggalAkhir, bypassCache) {
   bulan = String(bulan).trim().toLowerCase();
   tanggalMulai = parseInt(tanggalMulai, 10);
@@ -181,7 +218,6 @@ function hitungRekapWeb(bulan, tanggalMulai, tanggalAkhir, bypassCache) {
 
   const cacheKey = buildCacheKey_(bulan, tanggalMulai, tanggalAkhir);
 
-  // ── Cek cache dulu (kecuali user klik Refresh / bypassCache) ──
   if (!bypassCache) {
     try {
       const cached = CacheService.getScriptCache().get(cacheKey);
@@ -198,21 +234,17 @@ function hitungRekapWeb(bulan, tanggalMulai, tanggalAkhir, bypassCache) {
 
   setProgress({ current: 0, total: 3, text: "Mengambil daftar tab (paralel)..." });
 
-  // ── TAHAP 1: ambil nama semua tab dari 3 spreadsheet SEKALIGUS ──
   const allTitles = fetchAllSheetTitles_(SHEETS_CONFIG);
-
   const targetSheetsPerConfig = allTitles.map(titles =>
     titles.filter(name => isTargetSheet(name, bulanAliases, tanggalMulai, tanggalAkhir))
   );
 
   setProgress({ current: 1, total: 3, text: "Mengambil data (paralel)..." });
 
-  // ── TAHAP 2: ambil isi semua tab yang cocok dari 3 spreadsheet SEKALIGUS ──
   const allValueRanges = fetchAllBatchValues_(SHEETS_CONFIG, targetSheetsPerConfig);
 
   setProgress({ current: 2, total: 3, text: "Menyusun rekap..." });
 
-  // ── TAHAP 3: proses data (murni lokal, cepat) ──
   const combinedMap  = {};
   const combinedItem = {};
   const perSheet      = [];
@@ -277,7 +309,6 @@ function hitungRekapWeb(bulan, tanggalMulai, tanggalAkhir, bypassCache) {
     },
   };
 
-  // ── Simpan ke cache buat user lain yang minta periode sama ──
   try {
     const serialized = JSON.stringify(finalResult);
     if (serialized.length < CACHE_VALUE_MAX_BYTES) {
@@ -288,7 +319,6 @@ function hitungRekapWeb(bulan, tanggalMulai, tanggalAkhir, bypassCache) {
   return finalResult;
 }
 
-// ── HELPER: SUSUN HASIL ADMIN TERURUT ────────────────────────
 function buildSortedResult(adminMap) {
   const sorted = Object.entries(adminMap)
     .map(([admin, total]) => ({ admin, total, tim: getTim(admin) }))
@@ -301,7 +331,6 @@ function buildSortedResult(adminMap) {
   return { admins: sorted, floppaTotal, merpatiTotal, grandTotal };
 }
 
-// ── HELPER: SUSUN HASIL ITEM TERURUT ─────────────────────────
 function buildItemResult(itemMap) {
   const sorted = Object.entries(itemMap)
     .map(([nama, terjual]) => ({ nama, terjual }))
@@ -312,29 +341,6 @@ function buildItemResult(itemMap) {
   return { items: sorted, totalItemTerjual };
 }
 
-// ── FILTER TAB ───────────────────────────────────────────────
-function isTargetSheet(name, bulanAliases, tanggalMulai, tanggalAkhir) {
-  const lower = name.toLowerCase().trim();
-  const blacklist = ["template", "akun", "summary", "log", "total proses"];
-  if (blacklist.some(b => lower.includes(b))) return false;
-
-  let bulanIdx = -1;
-  for (const alias of bulanAliases) {
-    const idx = lower.indexOf(alias);
-    if (idx !== -1) { bulanIdx = idx; break; }
-  }
-  if (bulanIdx === -1) return false;
-
-  const prefix = lower.substring(0, bulanIdx).trim();
-  const digits = prefix.replace(/\D/g, "");
-  if (!digits) return false;
-
-  const tgl = parseInt(digits, 10);
-  if (isNaN(tgl)) return false;
-  return tgl >= tanggalMulai && tgl <= tanggalAkhir;
-}
-
-// ── BACA DATA ADMIN/PROSES ───────────────────────────────────
 function bacaDataSheet(rows, adminCol, prosesCol) {
   adminCol  = adminCol  ?? 13;
   prosesCol = prosesCol ?? 14;
@@ -375,7 +381,6 @@ function bacaDataSheet(rows, adminCol, prosesCol) {
   return result.length > 0 ? result : null;
 }
 
-// ── BACA DATA ITEM TERJUAL ───────────────────────────────────
 function bacaDataItem(rows, itemCol, terjualCol) {
   itemCol    = itemCol    ?? 10;
   terjualCol = terjualCol ?? 11;
@@ -412,11 +417,154 @@ function bacaDataItem(rows, itemCol, terjualCol) {
   return result;
 }
 
-// ── HELPER TIM ───────────────────────────────────────────────
 function getTim(adminName) {
   const key = adminName.toUpperCase().trim();
   if (TIM_CONFIG.FLOPPA.some(m => m.toUpperCase() === key))  return "FLOPPA";
   if (TIM_CONFIG.MERPATI.some(m => m.toUpperCase() === key)) return "MERPATI";
   if (key === "ARI") return "MERPATI";
   return "LAINNYA";
+}
+
+
+// ══════════════════════════════════════════════════════════
+//  FITUR 2 — SALDO AKUN (dulu project terpisah "Cek Saldo Akun Myx")
+// ══════════════════════════════════════════════════════════
+
+function hitungHargaGreedy_(nominal) {
+  let sisa = nominal;
+  let totalSen = 0;
+  for (const denom of [2000, 1000, 500, 80]) {
+    const jumlah = Math.floor(sisa / denom);
+    totalSen += jumlah * HARGA_PER_DENOM_SEN[denom];
+    sisa -= jumlah * denom;
+  }
+  if (sisa !== 0) return null;
+  return totalSen / 100;
+}
+
+function parseNominal_(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return null;
+
+  const isPrem = /prem/i.test(s);
+
+  const kMatch = s.match(/(\d+(?:\.\d+)?)\s*K/i);
+  if (kMatch) return { nominal: Math.round(parseFloat(kMatch[1]) * 1000), isPrem };
+
+  const cleaned = s.replace(/\./g, "");
+  const numMatch = cleaned.match(/\d+/);
+  if (!numMatch) return null;
+
+  return { nominal: parseInt(numMatch[0], 10), isPrem };
+}
+
+function hargaUntukNominal_(nominal, isPrem) {
+  if (isPrem) {
+    return HARGA_TABLE_PREM.hasOwnProperty(nominal)
+      ? { harga: HARGA_TABLE_PREM[nominal], isEstimasi: false }
+      : null;
+  }
+
+  if (HARGA_TABLE.hasOwnProperty(nominal)) {
+    return { harga: HARGA_TABLE[nominal], isEstimasi: false };
+  }
+
+  const estimasi = hitungHargaGreedy_(nominal);
+  return estimasi !== null ? { harga: estimasi, isEstimasi: true } : null;
+}
+
+function hitungSaldoAkun(kodeAkun, bulan, tanggalMulai, tanggalAkhir) {
+  kodeAkun = String(kodeAkun).trim().toLowerCase();
+  bulan = String(bulan).trim().toLowerCase();
+  tanggalMulai = parseInt(tanggalMulai, 10);
+  tanggalAkhir = parseInt(tanggalAkhir, 10);
+
+  if (!kodeAkun) throw new Error("Kode akun tidak boleh kosong.");
+  if (!bulan) throw new Error("Bulan tidak boleh kosong.");
+  if (isNaN(tanggalMulai) || tanggalMulai < 1 || tanggalMulai > 31) throw new Error("Tanggal mulai tidak valid (1-31).");
+  if (isNaN(tanggalAkhir) || tanggalAkhir < tanggalMulai || tanggalAkhir > 31) throw new Error("Tanggal akhir tidak valid.");
+
+  const bulanAliases = resolveMonthAliases(bulan);
+
+  const allTitles = fetchAllSheetTitles_(AKUN_SHEETS_CONFIG);
+  const targetSheetsPerConfig = allTitles.map(titles =>
+    titles.filter(name => isTargetSheet(name, bulanAliases, tanggalMulai, tanggalAkhir))
+  );
+  const allValueRanges = fetchAllBatchValues_(AKUN_SHEETS_CONFIG, targetSheetsPerConfig);
+
+  let totalSaldoTerpakai = 0;
+  let totalNominalTerpakai = 0; // dalam Robux — dipakai buat dibandingin sama saldo awal
+  const perSheet = [];
+  const failedRows = [];
+  const estimasiRows = [];
+  const successLog = [];
+
+  AKUN_SHEETS_CONFIG.forEach((config, idx) => {
+    const targetSheets = targetSheetsPerConfig[idx];
+    const valueRanges  = allValueRanges[idx] || [];
+    let sheetTotal = 0;
+    let sheetNominal = 0; // Robux
+    let jumlahTransaksi = 0;
+
+    valueRanges.forEach((vr, i) => {
+      const sheetName = targetSheets[i];
+      const rows = vr.values || [];
+      let jumlahDiTab = 0;
+
+      rows.forEach((row, rIdx) => {
+        const akunRaw = String(row[config.akunCol] ?? "").trim().toLowerCase();
+        if (akunRaw !== kodeAkun) return;
+
+        const statusRaw = String(row[config.statusCol] ?? "").trim().toLowerCase();
+        if (statusRaw !== "done") {
+          failedRows.push({
+            sheet: sheetName, label: config.label, row: rIdx + 1,
+            alasan: "Status bukan Done (nilai: \"" + (String(row[config.statusCol] ?? "").trim() || "kosong") + "\")",
+            raw: String(row[config.nominalCol] ?? "")
+          });
+          return;
+        }
+
+        const nominalRaw = row[config.nominalCol];
+        const parsed = parseNominal_(nominalRaw);
+
+        if (parsed === null) {
+          failedRows.push({ sheet: sheetName, label: config.label, row: rIdx + 1, alasan: "Nominal tidak terbaca", raw: String(nominalRaw) });
+          return;
+        }
+
+        const hasil = hargaUntukNominal_(parsed.nominal, parsed.isPrem);
+        if (hasil === null) {
+          failedRows.push({ sheet: sheetName, label: config.label, row: rIdx + 1, alasan: "Nominal " + parsed.nominal + (parsed.isPrem ? " PREM" : "") + " belum ada di tabel & gak bisa didekomposisi", raw: String(nominalRaw) });
+          return;
+        }
+
+        sheetTotal += hasil.harga;
+        sheetNominal += parsed.nominal;
+        jumlahTransaksi++;
+        jumlahDiTab++;
+
+        if (hasil.isEstimasi) {
+          estimasiRows.push({ sheet: sheetName, label: config.label, row: rIdx + 1, nominal: parsed.nominal, harga: hasil.harga });
+        }
+      });
+
+      successLog.push({ label: config.label, sheet: sheetName, jumlahData: jumlahDiTab });
+    });
+
+    totalSaldoTerpakai += sheetTotal;
+    totalNominalTerpakai += sheetNominal;
+    perSheet.push({ label: config.label, total: sheetTotal, nominalTerpakai: sheetNominal, jumlahTransaksi });
+  });
+
+  return {
+    kodeAkun,
+    periodeLabel: `${tanggalMulai} - ${tanggalAkhir} ${capitalize(resolveCanonicalMonth(bulan))} 2026`,
+    totalSaldoTerpakai,
+    totalNominalTerpakai,
+    perSheet,
+    failedRows,
+    estimasiRows,
+    successLog,
+  };
 }
